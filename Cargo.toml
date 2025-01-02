@@ -1,0 +1,15 @@
+[package]
+name = "divvun-worker-grammar"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+anyhow = "1.0.86"
+#divvun-runtime = { version = "0.1.0", path = "../divvun-runtime", default-features = false, features = ["mod-speech"] }
+poem = "3.0.1"
+serde = "1.0.203"
+serde_json = "1.0.117"
+subterm = { git = "https://github.com/bbqsrc/subterm", version = "0.0.1" }
+tokio = { version = "1.38.0", features = ["full"] }
+tracing = "0.1.40"
+tracing-subscriber = "0.3.18"
