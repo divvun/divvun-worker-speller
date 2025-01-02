@@ -1,16 +1,15 @@
-use std::{path::Path, process::Stdio, sync::Arc};
-
-// use divvun_runtime::{modules::Input, Bundle};
+use clap::Parser;
 use poem::{
     handler,
+    http::StatusCode,
     listener::TcpListener,
     middleware::Cors,
     post,
     web::{Data, Html, Json},
     EndpointExt, IntoResponse, Route, Server,
 };
-use subterm::{SubprocessHandler, SubprocessPool};
-use tokio::io::AsyncWriteExt;
+use std::{path::Path, sync::Arc};
+use subterm::{SubprocessHandler as _, SubprocessPool};
 
 #[derive(serde::Deserialize)]
 struct ProcessInput {
@@ -26,10 +25,7 @@ async fn process(
         Ok(bundle) => bundle,
         Err(e) => {
             tracing::error!("{:?}", e);
-            return Json(serde_json::json!({
-                "error": e.to_string()
-            }))
-            .into_response();
+            return StatusCode::INTERNAL_SERVER_ERROR.into_response();
         }
     };
 
@@ -91,29 +87,36 @@ document.querySelector(".doit").addEventListener("click", () => {
 struct Language(String);
 
 #[handler]
-async fn process_get(
-    Data(lang): Data<&Language>,
-) -> impl IntoResponse {
+async fn process_get(Data(lang): Data<&Language>) -> impl IntoResponse {
     Html(PAGE.replace("%LANG%", &lang.0)).into_response()
+}
+
+#[derive(Parser)]
+#[command(author, version, about, long_about = None)]
+struct Cli {
+    /// Path to the grammar bundle file
+    #[arg(required = true)]
+    bundle_path: String,
+
+    /// Host to bind the server to
+    #[arg(long, default_value = "127.0.0.1")]
+    host: String,
+
+    /// Port to run the server on
+    #[arg(long, default_value_t = 4000)]
+    port: u16,
 }
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
-    Ok(run().await?)
+    let cli = Cli::parse();
+    Ok(run(cli).await?)
 }
 
-async fn run() -> anyhow::Result<()> {
+async fn run(cli: Cli) -> anyhow::Result<()> {
     tracing_subscriber::fmt::init();
 
-    let file_path = match std::env::args().skip(1).next() {
-        Some(file_path) => file_path,
-        None => {
-            tracing::error!("No bundle path provided");
-            return Err(anyhow::anyhow!("No bundle path provided").into());
-        }
-    };
-
-    let path = Path::new(&file_path).canonicalize().unwrap();
+    let path = Path::new(&cli.bundle_path).canonicalize().unwrap();
     let parent_path = path.parent().unwrap().to_path_buf();
     let file_name = path.file_name().unwrap().to_str().unwrap().to_string();
     let lang = file_name.split('.').next().unwrap().to_string();
@@ -124,7 +127,6 @@ async fn run() -> anyhow::Result<()> {
     let pool = subterm::SubprocessPool::new(
         move || {
             let mut cmd = tokio::process::Command::new("docker");
-            // docker run -it -v `pwd`:/data divvun-checker:latest divvun-checker -v -t -a /data/se.zcheck
             cmd.args(["run", "-i", "-v"])
                 .arg(format!("{}:/data", parent_path.display()))
                 .args(["divvun-checker:latest", "divvun-checker", "-a"])
@@ -136,26 +138,13 @@ async fn run() -> anyhow::Result<()> {
     .await
     .unwrap();
 
-    let port = match std::env::var("PORT").ok().map(|x| x.parse::<u16>()) {
-        Some(Ok(port)) => port,
-        Some(Err(e)) => {
-            return Err(e.into());
-        }
-        None => 4000,
-    };
-
-    let host = match std::env::var("HOST").ok() {
-        Some(host) => host,
-        None => "127.0.0.1".to_string(),
-    };
-
     let app = Route::new()
         .at("/", post(process).get(process_get))
         .data(pool)
         .data(Language(lang))
         .with(Cors::default());
 
-    Server::new(TcpListener::bind((host, port)))
+    Server::new(TcpListener::bind((cli.host, cli.port)))
         .run(app)
         .await?;
 
