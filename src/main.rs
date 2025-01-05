@@ -1,4 +1,5 @@
 use clap::Parser;
+use divvunspell::tokenizer::Tokenize;
 use poem::{
     handler,
     http::StatusCode,
@@ -8,12 +9,31 @@ use poem::{
     web::{Data, Html, Json},
     EndpointExt, IntoResponse, Route, Server,
 };
+use serde::{Deserialize, Serialize};
 use std::{path::Path, sync::Arc};
 use subterm::{SubprocessHandler as _, SubprocessPool};
 
 #[derive(serde::Deserialize)]
 struct ProcessInput {
     text: String,
+}
+
+#[derive(Deserialize, Serialize, Debug, Clone)]
+pub struct HyphenationResponse {
+    pub text: String,
+    pub results: Vec<HyphenationResult>,
+}
+
+#[derive(Deserialize, Serialize, Debug, Clone)]
+pub struct HyphenationResult {
+    pub word: String,
+    pub hyphenations: Vec<HyphenationPattern>,
+}
+
+#[derive(Deserialize, Serialize, Debug, Clone)]
+pub struct HyphenationPattern {
+    pub value: String,
+    pub weight: f64,
 }
 
 #[handler]
@@ -29,19 +49,54 @@ async fn process(
         }
     };
 
-    bundle.write_line(&body.text).await.unwrap();
-    bundle.flush().await.unwrap();
-    let line = bundle.read_line().await.unwrap();
+    let words = body.text.word_indices().map(|x| x.1).collect::<Vec<&str>>();
+    let mut results = vec![];
 
-    let json: serde_json::Value = serde_json::from_str(&line).unwrap();
-    Json(json).into_response()
+    for word in words {
+        bundle.write_line(word).await.unwrap();
+        bundle.flush().await.unwrap();
+
+        let lines = bundle.read_until(b"\n\n").await.unwrap();
+
+        let patterns = lines
+            .trim()
+            .lines()
+            .filter_map(|line| {
+                let components: Vec<&str> = line.split("\t").collect();
+                if components.len() < 3 {
+                    return None;
+                }
+
+                let weight = components[2].parse();
+                if let Ok(weight) = weight {
+                    return Some(HyphenationPattern {
+                        value: components[1].to_owned(),
+                        weight,
+                    });
+                } else {
+                    None
+                }
+            })
+            .collect::<Vec<HyphenationPattern>>();
+
+        results.push(HyphenationResult {
+            word: word.to_owned(),
+            hyphenations: patterns,
+        });
+    }
+
+    Json(HyphenationResponse {
+        text: body.text,
+        results,
+    })
+    .into_response()
 }
 
 const PAGE: &str = r#"
 <!doctype html>
 <html>
 <head>
-<title>Divvun Grammar</title>
+<title>Divvun Hyphenator</title>
 <meta charset="utf-8">
 <style>
 .container {
@@ -62,7 +117,7 @@ Result:
 <pre class="result"></pre>
 </div>
 <button class="doit">
-Run grammar
+Run hyphenator
 </button>
 <script>
 document.querySelector(".doit").addEventListener("click", () => {
@@ -129,7 +184,8 @@ async fn run(cli: Cli) -> anyhow::Result<()> {
             let mut cmd = tokio::process::Command::new("docker");
             cmd.args(["run", "-i", "-v"])
                 .arg(format!("{}:/data", parent_path.display()))
-                .args(["divvun-checker:latest", "divvun-checker", "-a"])
+                .args(["divvun-checker:latest"])
+                .args(["hfst-lookup", "-n", "1", "-q"])
                 .arg(format!("/data/{}", &file_name));
             cmd
         },
