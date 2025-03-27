@@ -1,8 +1,7 @@
 use clap::Parser;
-use divvunspell::tokenizer::Tokenize;
+use divvunspell::{speller::Speller, tokenizer::Tokenize};
 use poem::{
     handler,
-    http::StatusCode,
     listener::TcpListener,
     middleware::Cors,
     post,
@@ -11,7 +10,6 @@ use poem::{
 };
 use serde::{Deserialize, Serialize};
 use std::{path::Path, sync::Arc};
-use subterm::{SubprocessHandler as _, SubprocessPool};
 
 #[derive(serde::Deserialize)]
 struct ProcessInput {
@@ -19,73 +17,52 @@ struct ProcessInput {
 }
 
 #[derive(Deserialize, Serialize, Debug, Clone)]
-pub struct HyphenationResponse {
+pub struct SpellerResponse {
     pub text: String,
-    pub results: Vec<HyphenationResult>,
+    pub results: Vec<SpellerResult>,
 }
 
 #[derive(Deserialize, Serialize, Debug, Clone)]
-pub struct HyphenationResult {
+pub struct SpellerResult {
     pub word: String,
-    pub hyphenations: Vec<HyphenationPattern>,
+    pub is_correct: bool,
+    pub suggestions: Vec<SpellerSuggestion>,
 }
 
 #[derive(Deserialize, Serialize, Debug, Clone)]
-pub struct HyphenationPattern {
+pub struct SpellerSuggestion {
     pub value: String,
-    pub weight: f64,
+    pub weight: f32,
 }
 
 #[handler]
 async fn process(
-    Data(pool): Data<&Arc<SubprocessPool>>,
+    Data(speller): Data<&Arc<dyn Speller + Send + Sync>>,
     Json(body): Json<ProcessInput>,
 ) -> impl IntoResponse {
-    let mut bundle = match pool.acquire().await {
-        Ok(bundle) => bundle,
-        Err(e) => {
-            tracing::error!("{:?}", e);
-            return StatusCode::INTERNAL_SERVER_ERROR.into_response();
-        }
-    };
-
     let words = body.text.word_indices().map(|x| x.1).collect::<Vec<&str>>();
     let mut results = vec![];
+    let speller = Arc::clone(&speller);
 
     for word in words {
-        bundle.write_line(word).await.unwrap();
-        bundle.flush().await.unwrap();
+        let word = word.to_string();
+        let is_correct = speller.clone().is_correct(&word);
+        let suggestions = speller.clone().suggest(&word);
 
-        let lines = bundle.read_until(b"\n\n").await.unwrap();
-
-        let patterns = lines
-            .trim()
-            .lines()
-            .filter_map(|line| {
-                let components: Vec<&str> = line.split("\t").collect();
-                if components.len() < 3 {
-                    return None;
-                }
-
-                let weight = components[2].parse();
-                if let Ok(weight) = weight {
-                    return Some(HyphenationPattern {
-                        value: components[1].to_owned(),
-                        weight,
-                    });
-                } else {
-                    None
-                }
-            })
-            .collect::<Vec<HyphenationPattern>>();
-
-        results.push(HyphenationResult {
+        results.push(SpellerResult {
             word: word.to_owned(),
-            hyphenations: patterns,
+            is_correct,
+            suggestions: suggestions
+                .into_iter()
+                .map(|s| SpellerSuggestion {
+                    value: s.value().to_owned(),
+                    weight: s.weight(),
+                })
+                .collect(),
         });
     }
 
-    Json(HyphenationResponse {
+    Json(SpellerResponse {
         text: body.text,
         results,
     })
@@ -96,7 +73,7 @@ const PAGE: &str = r#"
 <!doctype html>
 <html>
 <head>
-<title>Divvun Hyphenator</title>
+<title>Divvun Speller</title>
 <meta charset="utf-8">
 <style>
 .container {
@@ -176,27 +153,15 @@ async fn run(cli: Cli) -> anyhow::Result<()> {
     let file_name = path.file_name().unwrap().to_str().unwrap().to_string();
     let lang = file_name.split('.').next().unwrap().to_string();
 
+    let archive = divvunspell::archive::open(path).unwrap();
+    let speller = archive.speller();
+
     tracing::info!("Parent path: {}", parent_path.display());
     tracing::info!("File name: {}", file_name);
 
-    let pool = subterm::SubprocessPool::new(
-        move || {
-            let mut cmd = tokio::process::Command::new("docker");
-            cmd.args(["run", "-i", "-v"])
-                .arg(format!("{}:/data", parent_path.display()))
-                .args(["divvun-checker:latest"])
-                .args(["hfst-lookup", "-n", "1", "-q"])
-                .arg(format!("/data/{}", &file_name));
-            cmd
-        },
-        4,
-    )
-    .await
-    .unwrap();
-
     let app = Route::new()
         .at("/", post(process).get(process_get))
-        .data(pool)
+        .data(speller)
         .data(Language(lang))
         .with(Cors::default());
 

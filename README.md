@@ -1,4 +1,4 @@
-# divvun-worker-grammar
+# divvun-worker-speller
 
 ## Building
 
@@ -13,7 +13,7 @@ just build-linux
 ## Usage
 
 ```
-divvun-worker-grammar path/to/some.zcheck
+divvun-worker-speller path/to/some.zhfst
 ```
 
 ## Configuration
