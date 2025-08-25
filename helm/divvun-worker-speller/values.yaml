@@ -34,14 +34,12 @@ ingress:
   #    hosts:
   #      - speller.example.local
 
-# NFS Persistent Volume configuration
+# Persistence configuration
 persistence:
-  # Size of the PVC (not used for NFS but required)
-  size: 1Gi
-  # Storage class for NFS (leave empty for default)
-  storageClass: ""
-  # Optional: specify a pre-created PV name
-  volumeName: ""
+  # Enable persistent storage (set to false for testing with emptyDir)
+  enabled: true
+  # Name of existing PVC to use (must be pre-created)
+  existingClaim: "speller-data"
 
 resources: {}
   # We usually recommend not to specify default resources and to leave this as a conscious

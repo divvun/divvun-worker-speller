@@ -48,9 +48,14 @@ spec:
           resources:
             {{- toYaml .Values.resources | nindent 12 }}
       volumes:
+        {{- if .Values.persistence.enabled }}
         - name: speller-data
           persistentVolumeClaim:
-            claimName: {{ include "divvun-worker-speller.fullname" . }}-data
+            claimName: {{ .Values.persistence.existingClaim }}
+        {{- else }}
+        - name: speller-data
+          emptyDir: {}
+        {{- end }}
       {{- with .Values.nodeSelector }}
       nodeSelector:
         {{- toYaml . | nindent 8 }}
