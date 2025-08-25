@@ -1,7 +1,7 @@
 use clap::Parser;
 use divvunspell::{speller::Speller, tokenizer::Tokenize};
 use poem::{
-    handler,
+    get, handler,
     listener::TcpListener,
     middleware::Cors,
     post,
@@ -94,7 +94,7 @@ Result:
 <pre class="result"></pre>
 </div>
 <button class="doit">
-Run hyphenator
+Run speller
 </button>
 <script>
 document.querySelector(".doit").addEventListener("click", () => {
@@ -121,6 +121,11 @@ struct Language(String);
 #[handler]
 async fn process_get(Data(lang): Data<&Language>) -> impl IntoResponse {
     Html(PAGE.replace("%LANG%", &lang.0)).into_response()
+}
+
+#[handler]
+async fn health() -> impl IntoResponse {
+    Json(serde_json::json!({"status": "healthy"})).into_response()
 }
 
 #[derive(Parser)]
@@ -161,6 +166,7 @@ async fn run(cli: Cli) -> anyhow::Result<()> {
 
     let app = Route::new()
         .at("/", post(process).get(process_get))
+        .at("/health", get(health))
         .data(speller)
         .data(Language(lang))
         .with(Cors::default());

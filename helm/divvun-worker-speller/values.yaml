@@ -1,0 +1,62 @@
+# Default values for divvun-worker-speller.
+replicaCount: 1
+
+image:
+  repository: ghcr.io/divvun/divvun-worker-speller
+  pullPolicy: IfNotPresent
+  # Overrides the image tag whose default is the chart appVersion.
+  tag: "latest"
+
+nameOverride: ""
+fullnameOverride: ""
+
+# Speller configuration
+speller:
+  # The filename of the .zhfst bundle file in the NFS volume
+  bundleFilename: "speller.zhfst"
+
+service:
+  type: ClusterIP
+  port: 80
+
+ingress:
+  enabled: false
+  annotations: {}
+    # kubernetes.io/ingress.class: nginx
+    # kubernetes.io/tls-acme: "true"
+  hosts:
+    - host: speller.example.local
+      paths:
+        - path: /
+          pathType: Prefix
+  tls: []
+  #  - secretName: speller-tls
+  #    hosts:
+  #      - speller.example.local
+
+# NFS Persistent Volume configuration
+persistence:
+  # Size of the PVC (not used for NFS but required)
+  size: 1Gi
+  # Storage class for NFS (leave empty for default)
+  storageClass: ""
+  # Optional: specify a pre-created PV name
+  volumeName: ""
+
+resources: {}
+  # We usually recommend not to specify default resources and to leave this as a conscious
+  # choice for the user. This also increases chances charts run on environments with little
+  # resources, such as Minikube. If you do want to specify resources, uncomment the following
+  # lines, adjust them as necessary, and remove the curly braces after 'resources:'.
+  # limits:
+  #   cpu: 500m
+  #   memory: 512Mi
+  # requests:
+  #   cpu: 250m
+  #   memory: 256Mi
+
+nodeSelector: {}
+
+tolerations: []
+
+affinity: {}
