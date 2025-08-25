@@ -1,3 +1,4 @@
+use anyhow::{bail, Context};
 use clap::Parser;
 use divvunspell::{speller::Speller, tokenizer::Tokenize};
 use poem::{
@@ -153,16 +154,54 @@ async fn main() -> anyhow::Result<()> {
 async fn run(cli: Cli) -> anyhow::Result<()> {
     tracing_subscriber::fmt::init();
 
-    let path = Path::new(&cli.bundle_path).canonicalize().unwrap();
-    let parent_path = path.parent().unwrap().to_path_buf();
-    let file_name = path.file_name().unwrap().to_str().unwrap().to_string();
-    let lang = file_name.split('.').next().unwrap().to_string();
+    tracing::info!("Starting divvun-worker-speller");
+    tracing::info!("Attempting to load bundle: {}", cli.bundle_path);
 
-    let archive = divvunspell::archive::open(path).unwrap();
+    // Validate file exists before attempting to open
+    let bundle_path = Path::new(&cli.bundle_path);
+    if !bundle_path.exists() {
+        bail!("Bundle file does not exist: {}", cli.bundle_path);
+    }
+
+    if !bundle_path.is_file() {
+        bail!("Bundle path is not a file: {}", cli.bundle_path);
+    }
+
+    // Canonicalize the path with proper error handling
+    let path = bundle_path
+        .canonicalize()
+        .with_context(|| format!("Failed to canonicalize path: {}", cli.bundle_path))?;
+
+    let parent_path = path
+        .parent()
+        .context("Bundle file has no parent directory")?
+        .to_path_buf();
+
+    let file_name = path
+        .file_name()
+        .context("Failed to get file name from bundle path")?
+        .to_str()
+        .context("Bundle file name contains invalid UTF-8")?
+        .to_string();
+
+    // Extract language from filename (before first dot)
+    let lang = file_name
+        .split('.')
+        .next()
+        .context("Bundle filename has no extension")?
+        .to_string();
+
+    tracing::info!("Bundle file: {}", file_name);
+    tracing::info!("Extracted language: {}", lang);
+    tracing::info!("Bundle parent directory: {}", parent_path.display());
+
+    // Open the archive with proper error handling
+    tracing::info!("Opening spell checker archive...");
+    let archive = divvunspell::archive::open(&path)
+        .with_context(|| format!("Failed to open spell checker archive: {}", path.display()))?;
+
     let speller = archive.speller();
-
-    tracing::info!("Parent path: {}", parent_path.display());
-    tracing::info!("File name: {}", file_name);
+    tracing::info!("Successfully loaded spell checker for language: {}", lang);
 
     let app = Route::new()
         .at("/", post(process).get(process_get))
@@ -171,9 +210,11 @@ async fn run(cli: Cli) -> anyhow::Result<()> {
         .data(Language(lang))
         .with(Cors::default());
 
-    Server::new(TcpListener::bind((cli.host, cli.port)))
+    tracing::info!("Starting web server on {}:{}", cli.host, cli.port);
+    Server::new(TcpListener::bind((cli.host.clone(), cli.port)))
         .run(app)
-        .await?;
+        .await
+        .with_context(|| format!("Failed to start server on {}:{}", cli.host, cli.port))?;
 
     Ok(())
 }
