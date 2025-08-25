@@ -137,11 +137,11 @@ struct Cli {
     bundle_path: String,
 
     /// Host to bind the server to
-    #[arg(long, default_value = "127.0.0.1")]
+    #[arg(long, default_value = "127.0.0.1", env = "HOST")]
     host: String,
 
     /// Port to run the server on
-    #[arg(long, default_value_t = 4000)]
+    #[arg(long, default_value_t = 4000, env = "PORT")]
     port: u16,
 }
 
