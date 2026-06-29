@@ -1,6 +1,6 @@
 use anyhow::{bail, Context};
 use clap::Parser;
-use divvunspell::{speller::Speller, tokenizer::Tokenize};
+use divvun_fst::{speller::Speller, tokenizer::Tokenize};
 use poem::{
     get, handler,
     listener::TcpListener,
@@ -57,7 +57,7 @@ async fn process(
                 .into_iter()
                 .map(|s| SpellerSuggestion {
                     value: s.value().to_owned(),
-                    weight: s.weight(),
+                    weight: s.weight().0,
                 })
                 .collect(),
         });
@@ -197,7 +197,7 @@ async fn run(cli: Cli) -> anyhow::Result<()> {
 
     // Open the archive with proper error handling
     tracing::info!("Opening spell checker archive...");
-    let archive = divvunspell::archive::open(&path)
+    let archive = divvun_fst::archive::open(&path)
         .with_context(|| format!("Failed to open spell checker archive: {}", path.display()))?;
 
     let speller = archive.speller();
